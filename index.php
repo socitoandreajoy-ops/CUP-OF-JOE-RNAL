@@ -51,8 +51,7 @@ $loyalty_query = mysqli_query($conn, "SELECT customer_name, loyalty_points FROM 
     <div>
         <h3>Smart Brewing for Every Day</h3>
         <p>Manage products, stock, customers, and orders seamlessly in one place.</p>
-        <a href="new_order.php" class="btn" style="margin-top:12px;">+ New Order</a>
-    </div>
+        <a href="orders.php" class="btn" style="margin-top:12px;">View Customer Orders</a>    </div>
     <div class="cup">
         <small style="opacity:0.85;">EST. 2026</small>
         <b>Cup of Joe-rnal</b>
