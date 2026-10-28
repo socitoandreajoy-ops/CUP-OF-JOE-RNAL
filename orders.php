@@ -4,15 +4,13 @@ include 'header.php';   // already blocks non-admins and starts the session
 
 $e = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES);
 
-// Optional filter: ?src=self (customer self-orders only) or ?src=staff
 $src   = $_GET['src'] ?? 'all';
-$where = $src === 'self'  ? 'WHERE o.employee_id IS NULL'
-       : ($src === 'staff' ? 'WHERE o.employee_id IS NOT NULL' : '');
-
+$where = $src === 'self'  ? 'WHERE o.employee_id IS NULL AND o.placed_by_name IS NULL'
+       : ($src === 'staff' ? 'WHERE (o.employee_id IS NOT NULL OR o.placed_by_name IS NOT NULL)' : '');
+       
 $res = mysqli_query($conn, "SELECT o.order_id, o.order_date, o.total_amount,
         c.customer_name,
-        COALESCE(e.employee_name, 'Self-order') AS placed_via,
-        (SELECT GROUP_CONCAT(CONCAT(oi.quantity, 'x ', p.product_name) SEPARATOR ', ')
+        COALESCE(e.employee_name, o.placed_by_name, 'Self-order') AS placed_via,        (SELECT GROUP_CONCAT(CONCAT(oi.quantity, 'x ', p.product_name) SEPARATOR ', ')
            FROM order_items oi JOIN products p ON p.product_id = oi.product_id
           WHERE oi.order_id = o.order_id) AS items
     FROM orders o

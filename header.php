@@ -1,11 +1,29 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) session_start();
-if (($_SESSION['role'] ?? '') !== 'Admin') { header('Location: ' . (($_SESSION['role'] ?? '') === 'Customer' ? 'customer.php' : 'login.php')); exit; }
-$cur = basename($_SERVER['PHP_SELF']);
-$menu = ['OPERATIONS'=>['new_order.php'=>'🛒 New Order','orders.php'=>'🧾 Customer Orders'],
- 'INSIGHTS'=>['index.php'=>'📊 Dashboard','reports.php'=>'📈 Reports'],
- 'CATALOG'=>['categories.php'=>'🗂 Categories','products.php'=>'☕ Products','inventory.php'=>'📦 Inventory'],
- 'PEOPLE'=>['customers.php'=>'👥 Customers','employees.php'=>'🧑‍🍳 Employees']];
+
+$role = $_SESSION['role'] ?? '';
+$cur  = basename($_SERVER['PHP_SELF']);
+
+// Only Admin and Cashier may use these pages
+if (!in_array($role, ['Admin', 'Cashier'], true)) {
+    header('Location: ' . ($role === 'Customer' ? 'customer.php' : 'login.php'));
+    exit;
+}
+
+// Cashiers can only open New Order and Customer Orders
+if ($role === 'Cashier' && !in_array($cur, ['new_order.php', 'orders.php'], true)) {
+    header('Location: new_order.php');
+    exit;
+}
+
+if ($role === 'Cashier') {
+    $menu = ['OPERATIONS' => ['new_order.php' => '🛒 New Order', 'orders.php' => '🧾 Customer Orders']];
+} else {
+    $menu = ['OPERATIONS' => ['orders.php' => '🧾 Customer Orders'],
+     'INSIGHTS'=>['index.php'=>'📊 Dashboard','reports.php'=>'📈 Reports'],
+     'CATALOG'=>['categories.php'=>'🗂 Categories','products.php'=>'☕ Products','inventory.php'=>'📦 Inventory'],
+     'PEOPLE'=>['customers.php'=>'👥 Customers','employees.php'=>'🧑‍🍳 Employees']];
+}
 ?>
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

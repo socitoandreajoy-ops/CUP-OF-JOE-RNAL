@@ -59,8 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['place_order'])) {
             mysqli_stmt_execute($chk);
             $emp_ref = mysqli_fetch_row(mysqli_stmt_get_result($chk))[0] ?? null;
 
-            $st = mysqli_prepare($conn, "INSERT INTO orders (customer_id, employee_id, total_amount) VALUES (?, ?, 0)");
-            mysqli_stmt_bind_param($st, 'ii', $cust_id, $emp_ref);
+            $placed_by = $_SESSION['username'] ?? 'Admin';
+            $st = mysqli_prepare($conn, "INSERT INTO orders (customer_id, employee_id, placed_by_name, total_amount) VALUES (?, ?, ?, 0)");
+            mysqli_stmt_bind_param($st, 'iis', $cust_id, $emp_ref, $placed_by);
             mysqli_stmt_execute($st);
             $oid = mysqli_insert_id($conn);
             $total = 0;

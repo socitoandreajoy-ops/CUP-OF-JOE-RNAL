@@ -1,100 +1,181 @@
-<?php 
-include 'db.php'; 
-include 'header.php'; 
+<?php
+session_start();
+include 'db.php';
+if (($_SESSION['role'] ?? '') !== 'Admin') { header('Location: login.php'); exit; }
+mysqli_report(MYSQLI_REPORT_OFF);
 
-// Block non-admin users
-if ($_SESSION['role'] !== 'Admin') {
-    echo "<h3 style='color:red;'>Access Denied. Admin privileges required.</h3>";
-    exit();
-}
+$e      = fn($s) => htmlspecialchars((string)$s, ENT_QUOTES);
+$roles  = ['Barista', 'Cashier', 'Manager'];
+$errors = [];
+$msg    = $_GET['msg'] ?? '';
+$editId = (int)($_GET['edit'] ?? 0);
+$form   = ['employee_name' => '', 'role' => '', 'username' => ''];
 
-$edit_id = 0;
-$edit_name = "";
-$edit_role = "";
-
-// Check if editing a record
-if (isset($_GET['edit'])) {
-    $edit_id = (int)$_GET['edit'];
-    $res = mysqli_query($conn, "SELECT * FROM employees WHERE employee_id = $edit_id");
-    if ($row = mysqli_fetch_assoc($res)) {
-        $edit_name = $row['employee_name'];
-        $edit_role = $row['role'];
+// Load employee into the form when clicking Edit
+if ($editId > 0) {
+    $q = mysqli_prepare($conn, "SELECT employee_name, role, username FROM employees WHERE employee_id = ?");
+    mysqli_stmt_bind_param($q, 'i', $editId);
+    mysqli_stmt_execute($q);
+    $row = mysqli_fetch_assoc(mysqli_stmt_get_result($q));
+    if ($row) {
+        $form = ['employee_name' => $row['employee_name'], 'role' => $row['role'], 'username' => (string)$row['username']];
+    } else {
+        $editId = 0;
     }
 }
 
-// Handle Add or Update Submission
-if (isset($_POST['save_employee'])) {
-    $employee_id = (int)$_POST['employee_id'];
-    $employee_name = mysqli_real_escape_string($conn, $_POST['employee_name']);
-    $role = mysqli_real_escape_string($conn, $_POST['role']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $act = $_POST['action'] ?? '';
 
-    if (!empty($employee_name) && !empty($role)) {
-        if ($employee_id > 0) {
-            // UPDATE existing
-            mysqli_query($conn, "UPDATE employees SET employee_name='$employee_name', role='$role' WHERE employee_id=$employee_id");
-        } else {
-            // INSERT new
-            mysqli_query($conn, "INSERT INTO employees (employee_name, role) VALUES ('$employee_name', '$role')");
+    // ---------- ADD / UPDATE ----------
+    if ($act === 'save') {
+        $id     = (int)($_POST['employee_id'] ?? 0);
+        $editId = $id;
+        $form   = [
+            'employee_name' => trim($_POST['employee_name'] ?? ''),
+            'role'          => $_POST['role'] ?? '',
+            'username'      => trim($_POST['username'] ?? ''),
+        ];
+        $pw = $_POST['password'] ?? '';
+
+        if ($form['employee_name'] === '')            $errors[] = 'Employee name is required.';
+        elseif (strlen($form['employee_name']) > 100) $errors[] = 'Employee name is too long (max 100).';
+        if (!in_array($form['role'], $roles, true))   $errors[] = 'Please select a role.';
+
+        $isCashier = $form['role'] === 'Cashier';
+
+        // does this employee already have a password?
+        $hasPw = false;
+        if ($id > 0) {
+            $q = mysqli_prepare($conn, "SELECT password FROM employees WHERE employee_id = ?");
+            mysqli_stmt_bind_param($q, 'i', $id);
+            mysqli_stmt_execute($q);
+            $cur   = mysqli_fetch_assoc(mysqli_stmt_get_result($q));
+            $hasPw = !empty($cur['password'] ?? '');
         }
-        header("Location: employees.php");
-        exit();
+
+        if ($isCashier || $form['username'] !== '') {
+            if (!preg_match('/^[A-Za-z0-9._@-]{4,50}$/', $form['username'])) {
+                $errors[] = 'Username must be 4-50 characters (letters, numbers, . _ @ - only).';
+            } else {
+                $q = mysqli_prepare($conn, "SELECT 1 FROM employees WHERE LOWER(username) = LOWER(?) AND employee_id <> ?");
+                mysqli_stmt_bind_param($q, 'si', $form['username'], $id);
+                mysqli_stmt_execute($q);
+                if (mysqli_fetch_row(mysqli_stmt_get_result($q))) $errors[] = 'That username is already taken.';
+            }
+        }
+        if ($pw !== '' && strlen($pw) < 6)  $errors[] = 'Password must be at least 6 characters.';
+        if ($isCashier && $pw === '' && !$hasPw) $errors[] = 'Set a password so this cashier can log in.';
+
+        if (!$errors) {
+            $uname = $form['username'] !== '' ? $form['username'] : null;
+
+            if ($id > 0) {
+                if ($pw !== '') {
+                    $hash = password_hash($pw, PASSWORD_DEFAULT);
+                    $st = mysqli_prepare($conn, "UPDATE employees SET employee_name=?, role=?, username=?, password=? WHERE employee_id=?");
+                    mysqli_stmt_bind_param($st, 'ssssi', $form['employee_name'], $form['role'], $uname, $hash, $id);
+                } else {
+                    $st = mysqli_prepare($conn, "UPDATE employees SET employee_name=?, role=?, username=? WHERE employee_id=?");
+                    mysqli_stmt_bind_param($st, 'sssi', $form['employee_name'], $form['role'], $uname, $id);
+                }
+                $done = 'updated';
+            } else {
+                $hash = $pw !== '' ? password_hash($pw, PASSWORD_DEFAULT) : null;
+                $st = mysqli_prepare($conn, "INSERT INTO employees (employee_name, role, username, password) VALUES (?, ?, ?, ?)");
+                mysqli_stmt_bind_param($st, 'ssss', $form['employee_name'], $form['role'], $uname, $hash);
+                $done = 'added';
+            }
+
+            if (mysqli_stmt_execute($st)) {
+                header('Location: employees.php?msg=' . $done);
+                exit;
+            }
+            $errors[] = 'Could not save: ' . mysqli_stmt_error($st);
+        }
+    }
+
+    // ---------- DELETE ----------
+    if ($act === 'delete') {
+        $id = (int)($_POST['employee_id'] ?? 0);
+        $st = mysqli_prepare($conn, "DELETE FROM employees WHERE employee_id = ?");
+        mysqli_stmt_bind_param($st, 'i', $id);
+        if (mysqli_stmt_execute($st)) {
+            header('Location: employees.php?msg=deleted');
+            exit;
+        }
+        $errors[] = "Can't delete this employee because they already have orders on record. Edit them instead (change role or username).";
     }
 }
 
-// Handle Delete
-if (isset($_GET['delete'])) {
-    $id = (int)$_GET['delete'];
-    mysqli_query($conn, "DELETE FROM employees WHERE employee_id = $id");
-    header("Location: employees.php");
-    exit();
-}
-?>
+$list = mysqli_query($conn, "SELECT employee_id, employee_name, role, username,
+                                    (password IS NOT NULL AND password <> '') AS has_pw
+                             FROM employees ORDER BY employee_id");
 
+include 'header.php';
+$msgs = ['added' => 'Employee added.', 'updated' => 'Employee updated.', 'deleted' => 'Employee deleted.'];
+?>
 <h2>Employees Management</h2>
 
-<!-- Form (Handles both Add and Edit) -->
-<form method="POST" action="employees.php" style="margin-bottom: 20px;">
-    <input type="hidden" name="employee_id" value="<?php echo $edit_id; ?>">
-    <input type="text" name="employee_name" placeholder="Employee Name" value="<?php echo htmlspecialchars($edit_name); ?>" required>
-    <select name="role" required>
-        <option value="">Select Role</option>
-        <option value="Barista" <?php if ($edit_role === 'Barista') echo 'selected'; ?>>Barista</option>
-        <option value="Cashier" <?php if ($edit_role === 'Cashier') echo 'selected'; ?>>Cashier</option>
-        <option value="Manager" <?php if ($edit_role === 'Manager') echo 'selected'; ?>>Manager</option>
-    </select>
-    <button type="submit" name="save_employee"><?php echo $edit_id > 0 ? "Update Employee" : "Add Employee"; ?></button>
-    <?php if ($edit_id > 0): ?>
-        <a href="employees.php" style="margin-left: 10px;">Cancel</a>
-    <?php endif; ?>
+<?php if (isset($msgs[$msg])): ?><div class="alert ok"><?= $msgs[$msg] ?></div><?php endif; ?>
+<?php foreach ($errors as $er): ?><div class="alert err"><?= $e($er) ?></div><?php endforeach; ?>
+
+<div class="panel"><b><?= $editId > 0 ? 'Edit employee' : 'Add new employee' ?></b>
+<form class="f" method="post" action="employees.php<?= $editId > 0 ? '?edit=' . $editId : '' ?>" autocomplete="off" novalidate>
+  <input type="hidden" name="action" value="save">
+  <input type="hidden" name="employee_id" value="<?= $editId ?>">
+
+  <div><label>Full name</label>
+    <input type="text" name="employee_name" value="<?= $e($form['employee_name']) ?>" placeholder="e.g. Cardo Dalisay"></div>
+
+  <div><label>Role</label>
+    <select name="role">
+      <option value="">-- Select role --</option>
+      <?php foreach ($roles as $r): ?>
+        <option value="<?= $r ?>" <?= $form['role'] === $r ? 'selected' : '' ?>><?= $r ?></option>
+      <?php endforeach; ?>
+    </select></div>
+
+  <div><label>Login username <small>(cashiers)</small></label>
+    <input type="text" name="username" value="<?= $e($form['username']) ?>" placeholder="e.g. cardo" autocomplete="off"></div>
+
+  <div><label>Password <small>(cashiers)</small></label>
+    <input type="password" name="password" autocomplete="new-password"
+           placeholder="<?= $editId > 0 ? 'Leave blank to keep current' : 'At least 6 characters' ?>"></div>
+
+  <div class="sub" style="grid-column:1/-1">Only employees with the <b>Cashier</b> role can log in. They sign in on the login page by choosing "Cashier".</div>
+
+  <div style="align-self:end">
+    <button type="submit"><?= $editId > 0 ? 'Save changes' : 'Add employee' ?></button>
+    <?php if ($editId > 0): ?> <a class="btn alt" href="employees.php">Cancel</a><?php endif; ?>
+  </div>
 </form>
+</div>
 
-<!-- Employees List Table -->
-<table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Employee Name</th>
-            <th>Role</th>
-            <th>Action</th>
-        </tr>
-    </thead>
+<div class="panel">
+  <table>
+    <thead><tr><th>ID</th><th>Employee Name</th><th>Role</th><th>Username</th><th>Login</th><th>Action</th></tr></thead>
     <tbody>
-        <?php
-        $result = mysqli_query($conn, "SELECT * FROM employees");
-        while ($row = mysqli_fetch_assoc($result)) {
-            echo "<tr>";
-            echo "<td>{$row['employee_id']}</td>";
-            echo "<td>{$row['employee_name']}</td>";
-            echo "<td>{$row['role']}</td>";
-            echo "<td>
-                    <a href='employees.php?edit={$row['employee_id']}'>Edit</a> | 
-                    <a href='employees.php?delete={$row['employee_id']}' onclick='return confirm(\"Delete this employee?\")'>Delete</a>
-                  </td>";
-            echo "</tr>";
-        }
-        ?>
+    <?php while ($r = mysqli_fetch_assoc($list)):
+        $canLogin = $r['role'] === 'Cashier' && !empty($r['username']) && (int)$r['has_pw'] === 1; ?>
+      <tr>
+        <td><?= (int)$r['employee_id'] ?></td>
+        <td><?= $e($r['employee_name']) ?></td>
+        <td><span class="pill"><?= $e($r['role']) ?></span></td>
+        <td><?= $e($r['username'] ?? '') ?></td>
+        <td><?= $canLogin ? '<span class="pill">✅ Can log in</span>' : '<span class="sub">-</span>' ?></td>
+        <td style="white-space:nowrap">
+          <a class="btn sm alt" href="employees.php?edit=<?= (int)$r['employee_id'] ?>">Edit</a>
+          <form method="post" style="display:inline" onsubmit="return confirm('Delete this employee?')">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="employee_id" value="<?= (int)$r['employee_id'] ?>">
+            <button class="btn sm del" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+    <?php endwhile; ?>
     </tbody>
-</table>
+  </table>
+</div>
 
-</body>
-</html>
+</main></div></body></html>

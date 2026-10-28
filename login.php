@@ -6,12 +6,19 @@ require_once 'db.php';
 const ADMIN_EMAIL    = 'admin@cupofjoernal.com';
 const ADMIN_PASSWORD = 'Admin@123';
 
-$err   = '';$email = '';
+$err = ''; $email = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {$email = trim($_POST['email'] ?? '');$pw    = $_POST['password'] ?? '';$role  = ($_POST['role'] ?? '') === 'Admin' ? 'Admin' : 'Customer';$ok    = false;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email  = trim($_POST['email'] ?? '');
+    $pw     = $_POST['password'] ?? '';
+    $picked = $_POST['role'] ?? '';
+    $role   = in_array($picked, ['Admin', 'Cashier'], true) ? $picked : 'Customer';
+    $ok     = false;
+    $u      = null;
 
     if ($role === 'Admin') {
-        if (hash_equals(ADMIN_EMAIL, strtolower($email)) && hash_equals(ADMIN_PASSWORD, $pw)) {$ok = true;
+        if (hash_equals(ADMIN_EMAIL, strtolower($email)) && hash_equals(ADMIN_PASSWORD, $pw)) {
+            $ok = true;
             $u = [
                 'user_id'     => 0,
                 'full_name'   => 'Administrator',
@@ -20,24 +27,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {$email = trim($_POST['email'] ?? '')
                 'customer_id' => null
             ];
         }
+
+    } elseif ($role === 'Cashier') {
+        $st = mysqli_prepare($conn, "SELECT employee_id, employee_name, username, password
+                                     FROM employees
+                                     WHERE LOWER(username) = LOWER(?) AND role = 'Cashier'
+                                     LIMIT 1");
+        mysqli_stmt_bind_param($st, 's', $email);
+        mysqli_stmt_execute($st);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($st));
+
+        if ($row && !empty($row['password']) && password_verify($pw, $row['password'])) {
+            $ok = true;
+            $u = [
+                'user_id'     => (int)$row['employee_id'],
+                'full_name'   => $row['employee_name'],
+                'username'    => $row['username'],
+                'role'        => 'Cashier',
+                'customer_id' => null
+            ];
+        }
+
     } else {
-        // Case-insensitive lookup for email/username and role
+        // Customer: case-insensitive lookup for email/username
         $st = mysqli_prepare($conn, "SELECT user_id, full_name, username, password, role, customer_id
                                      FROM users
                                      WHERE (LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?))
                                        AND LOWER(role) = 'customer'
                                      LIMIT 1");
-        mysqli_stmt_bind_param($st, 'ss', $email,$email);
+        mysqli_stmt_bind_param($st, 'ss', $email, $email);
         mysqli_stmt_execute($st);
         $res = mysqli_stmt_get_result($st);
         $u   = mysqli_fetch_assoc($res);
 
         if ($u) {
-            if (password_verify($pw, $u['password'])) {$ok = true;
-            } elseif (hash_equals($u['password'], $pw)) {$ok   = true;
+            if (password_verify($pw, $u['password'])) {
+                $ok = true;
+            } elseif (hash_equals($u['password'], $pw)) {
+                $ok   = true;
                 $hash = password_hash($pw, PASSWORD_DEFAULT);
                 $s2   = mysqli_prepare($conn, "UPDATE users SET password = ? WHERE user_id = ?");
-                mysqli_stmt_bind_param($s2, 'si', $hash,$u['user_id']);
+                mysqli_stmt_bind_param($s2, 'si', $hash, $u['user_id']);
                 mysqli_stmt_execute($s2);
             }
         }
@@ -45,16 +75,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {$email = trim($_POST['email'] ?? '')
 
     if ($ok) {
         session_regenerate_id(true);
-        $_SESSION['user_id']     =$u['user_id'];
-        $_SESSION['username']    = !empty($u['full_name']) ? $u['full_name'] :$u['username'];
-        $_SESSION['role']        =$u['role'];
-        $_SESSION['customer_id'] =$u['customer_id'];
+        $_SESSION['user_id']     = $u['user_id'];
+        $_SESSION['username']    = !empty($u['full_name']) ? $u['full_name'] : $u['username'];
+        $_SESSION['role']        = $u['role'];
+        $_SESSION['customer_id'] = $u['customer_id'];
 
-        header('Location: ' . ($role === 'Admin' ? 'index.php' : 'customer.php'));
+        $dest = $role === 'Admin' ? 'index.php' : ($role === 'Cashier' ? 'new_order.php' : 'customer.php');
+        header('Location: ' . $dest);
         exit();
     }
 
-    $err = 'Incorrect email, password, or account type.';
+    $err = 'Incorrect email/username, password, or account type.';
 }
 
 $e = fn($s) => htmlspecialchars($s, ENT_QUOTES);
@@ -98,13 +129,17 @@ $e = fn($s) => htmlspecialchars($s, ENT_QUOTES);
                     <span>Customer</span>
                 </label>
                 <label>
+                    <input type="radio" name="role" value="Cashier" <?= ($_POST['role'] ?? '') === 'Cashier' ? 'checked' : '' ?>>
+                    <span>Cashier</span>
+                </label>
+                <label>
                     <input type="radio" name="role" value="Admin" <?= ($_POST['role'] ?? '') === 'Admin' ? 'checked' : '' ?>>
                     <span>Admin</span>
                 </label>
             </fieldset>
 
-            <label for="email">Email address</label>
-            <input type="email" id="email" name="email" autocomplete="username" required value="<?= $e($email) ?>">
+            <label for="email">Email or username</label>
+            <input type="text" id="email" name="email" autocomplete="username" required value="<?= $e($email) ?>">
 
             <label for="password">Password</label>
             <div class="pw">

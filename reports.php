@@ -148,8 +148,8 @@ $today = date('Y-m-d');
     <thead><tr><th>Order ID</th><th>Date &amp; Time</th><th>Customer</th><th>Served By</th><th>Total</th></tr></thead>
     <tbody>
     <?php
-    $history_res = mysqli_query($conn, "SELECT o.order_id, o.order_date, c.customer_name,
-            COALESCE(e.employee_name,'Self-order') AS employee_name, o.total_amount
+        $history_res = mysqli_query($conn, "SELECT o.order_id, o.order_date, c.customer_name,
+            COALESCE(e.employee_name, o.placed_by_name, 'Self-order') AS employee_name, o.total_amount
         FROM orders o
         JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN employees e ON o.employee_id = e.employee_id
